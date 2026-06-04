@@ -1,0 +1,11 @@
+[package]
+name = "spreadsheet-formulas"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/SuperInstance/spreadsheet-formulas"
+description = "Formula engine for the SuperInstance Spreadsheet — parsing and evaluating formulas like =EVOLVE(A1:A10, 100)"
+keywords = ["spreadsheet", "formula", "parser", "evaluator"]
+categories = ["parser-implementations", "mathematics"]
+
+[dependencies]
