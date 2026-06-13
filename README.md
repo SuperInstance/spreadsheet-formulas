@@ -1,112 +1,108 @@
-# spreadsheet-formulas
+# Spreadsheet Formulas
 
-Formula engine for the **SuperInstance Spreadsheet** — parsing and evaluating spreadsheet formulas in pure Rust.
+**Spreadsheet Formulas** is a Rust formula engine for parsing and evaluating spreadsheet expressions — supporting arithmetic, cell references, ranges, built-in functions, and custom domain-specific functions like `=EVOLVE(A1:A10, 100)`.
 
-## Features
+## Why It Matters
 
-- **Formula parsing** with full operator precedence
-- **Cell references**: `A1`, `$B$12`, `C$5`, `$D3`
-- **Ranges**: `A1:A10`, `B:B`, `$A$1:$C$5`
-- **Built-in functions**: arithmetic, statistical, and SuperInstance-specific
-- **Zero dependencies** — pure Rust, no unsafe code
+Spreadsheets are the world's most widely used programming language — over a billion people use Excel or Google Sheets daily. Adding formula support to any application (dashboard, reporting tool, agent UI) requires a tokenizer, parser, AST evaluator, and cell reference resolver. This crate provides the full pipeline: `tokenizer.rs` breaks text into tokens, `parser.rs` builds an AST, `evaluator.rs` computes results, `cellref.rs` resolves references, and `builtins.rs` provides standard functions (SUM, AVG, MAX, MIN, EVOLVE).
+
+## How It Works
+
+### Tokenization Pipeline
+
+```
+Text → Tokenizer → Tokens → Parser → AST → Evaluator → Value
+```
+
+The tokenizer recognizes:
+- Numbers: `42`, `3.14`, `1e10`
+- Strings: `"hello"`
+- Cell references: `A1`, `B12`, `$C$3`
+- Ranges: `A1:B10`
+- Operators: `+`, `-`, `*`, `/`, `^`, `=`, `>`, `<`, `>=`, `<=`, `<>`
+- Functions: `SUM(`, `AVG(`, `EVOLVE(`
+
+Tokenization: **O(N)** where N = formula length.
+
+### Parser (Recursive Descent)
+
+The parser uses recursive descent with precedence climbing:
+
+```
+expr   → term (('+' | '-') term)*
+term   → factor (('*' | '/') factor)*
+factor → number | string | cellref | range | func_call | '(' expr ')'
+func   → IDENT '(' arg_list ')'
+```
+
+Operator precedence: `^` (power) > `*`/`/` > `+`/`-` > comparison operators. Parser complexity: **O(N)**.
+
+### AST Evaluation
+
+The `Expr` AST type:
+
+```rust
+enum Expr {
+    Number(f64),
+    String(String),
+    CellRef(CellRef),
+    Range(Range),
+    BinOp(Op, Box<Expr>, Box<Expr>),
+    FuncCall(String, Vec<Expr>),
+}
+```
+
+Evaluation walks the AST recursively. `CellRef` lookup: **O(1)** (HashMap). Range expansion: **O(W×H)** for a W-wide, H-tall range. `FuncCall`: **O(args)** plus function-specific cost.
+
+### Built-in Functions
+
+| Function | Signature | Complexity |
+|----------|-----------|------------|
+| `SUM(range)` | Σ of numeric values | O(N) |
+| `AVG(range)` | Arithmetic mean | O(N) |
+| `MIN/MAX(range)` | Extremum | O(N) |
+| `COUNT(range)` | Non-empty cell count | O(N) |
+| `EVOLVE(range, target)` | Custom: fitness-weighted evolution | O(N) |
+
+### Dependency Resolution
+
+Cell references create dependency graphs. The evaluator detects and rejects circular references in **O(V + E)** topological sort before evaluation.
 
 ## Quick Start
 
 ```rust
-use spreadsheet_formulas::{Parser, evaluate, DataContext, Value};
+use spreadsheet_formulas::{evaluate, tokenize, parse};
 
-let expr = Parser::parse_formula("=SUM(A1:A10)").unwrap();
-
-let mut ctx = DataContext::new();
-for i in 0..10 {
-    ctx.insert((i, 0), Value::Number((i + 1) as f64));
-}
-
-let result = evaluate(&expr, &ctx).unwrap();
+// Evaluate a simple formula
+let tokens = tokenize("=SUM(A1:A3) + 5");
+let ast = parse(&tokens)?;
+let result = evaluate(&ast, &cell_context)?;
+println!("Result: {}", result); // 42 if A1=10, A2=15, A3=12
 ```
 
-## Formula Reference
+## API
 
-### Operators
+| Module | Key Types |
+|--------|-----------|
+| `tokenizer` | `Token`, `tokenize(text) -> Vec<Token>` |
+| `parser` | `parse(tokens) -> Result<Expr>` |
+| `ast` | `Expr` (Number, String, CellRef, Range, BinOp, FuncCall) |
+| `evaluator` | `evaluate(expr, ctx) -> Result<Value>` |
+| `cellref` | `CellRef` (column, row, absolute flags) |
+| `range` | `Range` (start, end CellRefs) |
+| `builtins` | `sum()`, `avg()`, `evolve()`, etc. |
 
-| Operator | Description | Precedence |
-|----------|-------------|------------|
-| `^` | Exponentiation | Highest |
-| `*`, `/` | Multiplication, Division | |
-| `+`, `-` | Addition, Subtraction | |
-| `&` | String concatenation | |
-| `=`, `!=`, `<`, `>`, `<=`, `>=` | Comparison | Lowest |
-| `%` | Percent (postfix) | After unary |
-| `-` | Unary negation | |
+## Architecture Notes
 
-### Cell References
+Spreadsheet Formulas provides the computation layer for agent dashboards in SuperInstance. In γ + η = C, formula evaluation drives γ (growth — computing derived metrics from raw sensor data) while dependency cycle detection provides η (avoidance — preventing infinite computation loops). The `EVOLVE` function integrates with the ternary evolution benchmarks from `ternary-benchmark`.
 
-- `A1` — relative column, relative row
-- `$A$1` — absolute column, absolute row
-- `$A1` — absolute column, relative row
-- `A$1` — relative column, absolute row
+See [ARCHITECTURE.md](https://github.com/SuperInstance/SuperInstance/blob/main/ARCHITECTURE.md) for dashboard architecture.
 
-### Ranges
+## References
 
-- `A1:B5` — cell range
-- `B:B` — full column
-- `B:D` — multi-column range
-
-### Built-in Functions
-
-#### Standard Functions
-
-| Function | Description |
-|----------|-------------|
-| `SUM(range)` | Sum of values |
-| `AVG(range)` / `AVERAGE(range)` | Arithmetic mean |
-| `COUNT(range)` | Count numeric values |
-| `MIN(range)` | Minimum value |
-| `MAX(range)` | Maximum value |
-| `ABS(n)` | Absolute value |
-| `SQRT(n)` | Square root |
-| `POW(base, exp)` | Power |
-| `LOG(n)` / `LOG(n, base)` | Logarithm |
-| `IF(cond, then, else)` | Conditional |
-
-#### SuperInstance Functions
-
-| Function | Description |
-|----------|-------------|
-| `EVOLVE(range, generations)` | Evolutionary optimization — simulates generations of improvement over the data |
-| `BEST(range)` | Returns the maximum value in the range |
-| `SPECIES(range)` | Counts unique species (unique values) in the data |
-| `EXHAUSTIVE(range)` | Counts unique value combinations (up to 1M) |
-| `ENTROPY(range)` | Calculates Shannon entropy of the data distribution |
-| `PARETO(range)` | Identifies values on the Pareto front |
-| `CORRELATE(range1, range2)` | Pearson correlation coefficient between two datasets |
-
-### Examples
-
-```
-=SUM(A1:A10)
-=AVG(B1:B20)
-=EVOLVE(A1:A10, 100)
-=BEST(B:B)
-=ENTROPY(C1:C20)
-=SPECIES(D1:D50)
-=CORRELATE(A1:A10, B1:B10)
-=PARETO(E1:E100)
-=EXHAUSTIVE(F1:F10)
-=IF(A1>5, "high", "low")
-=2^10
-=50%
-```
-
-## Architecture
-
-- `tokenizer` — Lexes formula strings into tokens
-- `parser` — Recursive descent parser producing an AST
-- `ast` — Expression types (numbers, operators, function calls, etc.)
-- `cellref` — Cell reference parsing (A1, $B$12)
-- `range` — Range parsing (A1:A10, B:B)
-- `evaluator` — Evaluates AST against a data context
-- `builtins` — All built-in function implementations
+1. Sestoft, P. (2014). *Spreadsheet Implementation Technology: Basics and Extensions*. MIT Press.
+2. Erwig, M. et al. (2006). "Ensuring Spreadsheet Integrity with Formula Theory." *Software Engineering and Formal Methods*.
+3. "Excel Specification and Limits." Microsoft Support Documentation, 2024.
 
 ## License
 
